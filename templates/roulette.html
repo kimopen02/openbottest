@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>Canvas 룰렛</title>
+  <style>
+    body {
+      background: #fefae0;
+      text-align: center;
+      font-family: sans-serif;
+    }
+    canvas {
+      margin-top: 40px;
+    }
+    #spin {
+      margin-top: 20px;
+      padding: 10px 20px;
+      font-size: 18px;
+    }
+    #result {
+      margin-top: 20px;
+      font-size: 20px;
+    }
+    #history {
+      margin-top: 10px;
+      font-size: 16px;
+      color: #333;
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .history-entry {
+      background: #fff3cd;
+      border: 1px solid #f0ad4e;
+      border-radius: 8px;
+      padding: 5px 10px;
+    }
+  </style>
+</head>
+<body>
+
+<h1>시참 로테이션 룰렛</h1>
+<p>이름을 쉼표로 구분해 입력해주세요</p>
+<input type="text" id="nameInput" placeholder="예: 달해나,Made,오픈이" size="40">
+<br><br>
+<canvas id="canvas" width="500" height="500"></canvas>
+<br>
+<button id="spin">돌리기!</button>
+<p id="result"></p>
+<div id="history"></div>
+
+<script>
+  const canvas = document.getElementById("canvas");
+  const ctx = canvas.getContext("2d");
+  const nameInput = document.getElementById("nameInput");
+  const resultEl = document.getElementById("result");
+  const historyEl = document.getElementById("history");
+  let names = [];
+  let total = 0;
+  let arc = 0;
+  let startAngle = 0;
+  let isSpinning = false;
+  let spinVelocity = 0;
+  let winners = new Set();
+
+  async function fetchNamesFromServer() {
+    try {
+      const res = await fetch("http://localhost:5000/names");
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        names = data;
+        nameInput.value = names.join(",");
+        drawWheel();
+      }
+    } catch (err) {
+      console.error("이름 목록 불러오기 실패:", err);
+    }
+  }
+
+  function drawWheel() {
+    total = names.length;
+    arc = 2 * Math.PI / total;
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+    const radius = 200;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    for (let i = 0; i < total; i++) {
+      const angle = startAngle + i * arc;
+      ctx.beginPath();
+      ctx.fillStyle = `hsl(${(i * 360) / total}, 70%, 60%)`;
+      ctx.moveTo(centerX, centerY);
+      ctx.arc(centerX, centerY, radius, angle, angle + arc);
+      ctx.fill();
+      ctx.save();
+
+      ctx.translate(centerX, centerY);
+      ctx.rotate(angle + arc / 2);
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#fff";
+      ctx.font = "16px sans-serif";
+      ctx.fillText(names[i], radius * 0.5, 6);
+      ctx.restore();
+    }
+
+    ctx.beginPath();
+    ctx.moveTo(centerX - 10, centerY - radius - 10);
+    ctx.lineTo(centerX + 10, centerY - radius - 10);
+    ctx.lineTo(centerX, centerY - radius + 10);
+    ctx.fillStyle = "red";
+    ctx.fill();
+  }
+
+  function spin() {
+    if (isSpinning) return;
+    const raw = nameInput.value.trim();
+    if (!raw) {
+      alert("이름을 입력해주세요.");
+      return;
+    }
+    names = raw.split(",").map(n => n.trim()).filter(n => n !== "");
+    if (names.length < 2) {
+      alert("최소 2명 이상 입력해주세요.");
+      return;
+    }
+
+    isSpinning = true;
+    startAngle = Math.random() * 2 * Math.PI;
+    spinVelocity = Math.PI * 2 + Math.random() * Math.PI * 10;
+
+    let spinTime = 0;
+    const spinTotal = 5000;
+    const rotateStep = () => {
+      spinTime += 30;
+      const angle = easeOut(spinTime, 0, spinVelocity, spinTotal);
+      startAngle = angle % (2 * Math.PI);
+      drawWheel();
+
+      if (spinTime < spinTotal) {
+        requestAnimationFrame(rotateStep);
+      } else {
+        isSpinning = false;
+        const correctedAngle = (2 * Math.PI - startAngle + 3 * Math.PI / 2) % (2 * Math.PI);
+        const index = Math.floor(correctedAngle / arc) % total;
+        const winner = names[index];
+        resultEl.textContent = `당첨: ${winner}`;
+
+        if (!winners.has(winner)) {
+          winners.add(winner);
+          const entry = document.createElement("div");
+          entry.textContent = winner;
+          entry.className = "history-entry";
+          historyEl.appendChild(entry);
+        }
+
+        fetch("http://localhost:5000/winner", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: winner })
+        }).catch(err => console.error("당첨자 전송 실패:", err));
+      }
+    };
+    rotateStep();
+  }
+
+  function easeOut(t, b, c, d) {
+    t /= d;
+    return -c * t*(t-2) + b;
+  }
+
+  document.getElementById("spin").addEventListener("click", spin);
+  nameInput.addEventListener("keypress", function(e) {
+    if (e.key === "Enter") {
+      spin();
+    }
+  });
+
+  fetchNamesFromServer();
+</script>
+
+</body>
+</html>
